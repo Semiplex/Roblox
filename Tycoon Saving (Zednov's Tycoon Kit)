@@ -1,0 +1,173 @@
+--[[-Service-]]--
+players = game:GetService("Players")
+replicatedstorage = game:GetService("ReplicatedStorage")
+datastoreservice = game:GetService("DataStoreService")
+serverstorage = game:GetService("ServerStorage")
+--[[-DataStore-]]--
+datastore_tycoon_purchases = datastoreservice:GetDataStore("AlphaV7_purchases")
+datastore_tycoon_statistics = datastoreservice:GetDataStore("AlphaV7_statistics")
+--[[-Instance-]]--
+tycoons = script.Parent.Tycoons
+--[[-Scripts-]]--
+settings_tycoon = require(script.Parent.Settings)
+--[[-Developer-Settings-]]--
+object_save_name = "_save_objects"
+save_load_time = 1
+--[[-Get-Datastore-]]--
+local function get_datastore(player)
+	local purchases
+	local succ, err = pcall(function()
+		purchases = datastore_tycoon_purchases:GetAsync(player.UserId)
+	end)
+	if succ then
+		print(player.Name .. "'s tycoon purchases successfully received. [Received]")
+		return purchases
+	elseif err then
+		print(player.Name .. "'s tycoon purchases wasn't successfully received. [Received]")
+		warn(err)
+	end
+end
+--[[-Get-Owner-]]--
+local function get_owner(tycoon_instance)
+	for i, tycoon in pairs(tycoons:GetChildren()) do
+		if tycoon == tycoon_instance then
+			local tycoon_owner = tycoon.Owner.value
+			return tycoon_owner 
+		end
+	end
+end
+--[[-Save-Objects-]]--
+objects_save = Instance.new("Folder",replicatedstorage)
+objects_save.Name = "objects_save"
+local function save_objects(tycoon)
+	local objects = tycoon.Purchases
+	if objects and not replicatedstorage:WaitForChild("objects_save"):FindFirstChild(tycoon.Name .. object_save_name ) then
+		local tycoon_objects = Instance.new("Folder",objects_save)
+		tycoon_objects.Name = tycoon.Name .. object_save_name
+		for i, object in pairs(objects:GetChildren()) do
+			local object_clone = object:Clone()
+			object_clone.Parent = tycoon_objects
+		end
+	end
+end
+--[[-Save/Load-Statistics-Datastore-]]--
+local function save_load_statistics_datastore(player,tycoon,Save)
+	local player_money = serverstorage:WaitForChild("PlayerMoney"):FindFirstChild(player.Name)
+	local tycoon_cashcollect = tycoon.CurrencyToCollect
+	wait(save_load_time)
+	if Save == true then
+		local player_statistics = {
+			player_money.Value,
+			tycoon_cashcollect.Value
+		}
+		local succ, err = pcall(function()
+			datastore_tycoon_statistics:SetAsync(player.UserId,player_statistics)
+		end)
+		if succ then
+			print(player.Name .. "'s tycoon statistics successfully saved.")
+		elseif err then
+			print(player.Name .. "'s tycoon statistics wasn't successfully saved!")
+			warn(err)
+		end
+	else
+		local player_statistics
+		local succ, err = pcall(function()
+			player_statistics = datastore_tycoon_statistics:GetAsync(player.UserId,tycoon)
+		end)
+		if succ then
+			if player_statistics ~= nil then
+				player_money.Value = player_statistics[1]
+				tycoon_cashcollect.Value = player_statistics[2]
+			end
+			print(player.Name .. "'s tycoon statistics successfully Set.")
+		elseif err then
+			warn(err)
+		end
+	end
+end
+--[[-Save-Objects-Datastore-]]--
+local function save_objects_datastore(player,tycoon)
+	local purchases = {}
+	local purchasedobjects = tycoon.PurchasedObjects
+	players.PlayerRemoving:Connect(function(player_leave)
+		if player == player_leave then
+			table.clear(purchases)
+			for i, object in pairs(purchasedobjects:GetChildren()) do
+				table.insert(purchases,object.Name)
+			end
+			save_load_statistics_datastore(player,tycoon,true)
+			local succ, err = pcall(function()
+				datastore_tycoon_purchases:SetAsync(player.UserId, purchases)
+			end)
+			if succ then
+				print(player.Name .. "'s tycoon purchases successfully saved. [Save]")
+			elseif err then
+				print(player.Name .. "'s tycoon purchases wasn't successfully saved! [Save]")
+				warn(err)
+			end
+		end
+	end)
+end
+--[[-Load-Datastore-]]--
+local function load_datastore(player,tycoon)
+	local humanoidrootpart = player.Character.HumanoidRootPart
+	humanoidrootpart.Anchored = true
+	local purchases = get_datastore(player)
+	if purchases ~= nil then
+		print(player.Name .. " data found. Loading...")
+		for index = 1, #purchases do
+			wait()
+			local tycoon_owner = tycoon.Owner
+			if tycoon_owner and players:GetChildren(player) and player == tycoon_owner.Value then
+				local name = purchases[index]
+				local tycoon_objects = objects_save:WaitForChild(tycoon.Name .. object_save_name)
+				local load_objects = tycoon_objects:WaitForChild(name):Clone()
+				print(index .. " - " .. name .. " load into Tycoon.")
+				load_objects.Parent = tycoon.PurchasedObjects
+			end
+		end
+		wait(settings_tycoon["FadeOutTime"] + 0.2 + save_load_time )
+		local buttons = tycoon.Buttons
+		for i, button in pairs(buttons:GetChildren()) do
+			local button_object = button:FindFirstChild("Object")
+			if button_object then
+				for index = 1, #purchases do
+					if button_object.Value == purchases[index] then
+						local button_head = button.Head
+						button_head.CanCollide = false
+						button_head.Transparency = 1
+					end
+				end
+			end
+		end
+		save_load_statistics_datastore(player,tycoon,false)
+	else
+		print(player.Name .. "'s data are empty.")
+	end
+	humanoidrootpart.Anchored = false
+	save_objects_datastore(player,tycoon)
+end
+--[[-Ownership-Change-]]--
+local function ownership_change(tycoon)
+	save_objects(tycoon)
+	local owner = tycoon.Owner
+	owner:GetPropertyChangedSignal("Value"):Connect(function()
+		local tycoon_owner = get_owner(tycoon)
+		if tycoon_owner ~= nil then
+			load_datastore(tycoon_owner,tycoon)
+			print(tycoon_owner.Name .. " claimed " .. tycoon.Name .. ".")
+		end
+	end)
+end
+tycoons.ChildAdded:Connect(function(tycoon)
+	ownership_change(tycoon)
+end)
+for i, tycoon in pairs(tycoons:GetChildren()) do
+	ownership_change(tycoon)
+end
+
+game:BindToClose(function()
+	wait(5)
+end)
+
+-- Code by Semiplex
